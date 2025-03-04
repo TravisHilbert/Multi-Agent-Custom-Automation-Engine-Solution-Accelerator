@@ -130,18 +130,27 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
     name: '00000000-0000-0000-0000-000000000002'
   }
 
+  //TODO : Implementation 1 : Review and Remove
   resource autogenDb 'sqlDatabases' = {
-    name: 'autogen'
+    name: 'EnableServerless'
     properties: {
       resource: {
         id: 'autogen'
         createMode: 'Default'
       }
-      options: {
-        throughput: resourceSize.cosmosThroughput
-      }
     }
 
+    //TODO : Implementation 2 : Review and Remove
+    resource autogenDb 'sqlDatabases' = {
+      name: 'autogenDb'
+      properties: {
+          capabilities: [
+              {
+                  name: 'EnableServerless'
+              }
+          ]
+      }
+  }
     resource memoryContainer 'containers' = {
       name: 'memory'
       properties: {
