@@ -7,8 +7,8 @@ param azureOpenAILocation string = 'japaneast' //Fixed for model availability
 
 
 @description('A prefix to add to the start of all resource names. Note: A "unique" suffix will also be added')
-//param prefix string = 'macae'
-param prefix string = 'matest'
+param prefix string = 'macae8'
+
 @description('Tags to apply to all deployed resources')
 param tags object = {}
 
@@ -22,7 +22,6 @@ param resourceSize {
     maxReplicas: int
   }
 } = {
-//Change Capacity back to 50 before publish 
   gpt4oCapacity: 1
   containerAppSize: {
     cpu: '2.0'
