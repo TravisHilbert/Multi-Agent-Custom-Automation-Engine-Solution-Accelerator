@@ -1,449 +1,410 @@
-@description('Location for all resources.')
-param location string = 'EastUS2' //Fixed for model availability, change back to resourceGroup().location
+metadata name = 'main'
+metadata description = 'avm tests'
 
-@description('Location for OpenAI resources.')
-param azureOpenAILocation string = 'japaneast' //Fixed for model availability
+@description('Required. Name of the resource to create.')
+param solutionPrefix string = 'rep234z'
 
+@description('Optional. Location for all Resources.')
+param solutionLocation string = resourceGroup().location
 
+@description('Optional. Enable/Disable usage telemetry for module.')
+param enableTelemetry bool = true
 
-@description('A prefix to add to the start of all resource names. Note: A "unique" suffix will also be added')
-param prefix string = 'macaeo'
-
-@description('Tags to apply to all deployed resources')
-param tags object = {}
-
-@description('The size of the resources to deploy, defaults to a mini size')
-param resourceSize {
-  gpt4oCapacity: int
-  containerAppSize: {
-    cpu: string
-    memory: string
-    minReplicas: int
-    maxReplicas: int
-  }
-} = {
-  gpt4oCapacity: 5
-  containerAppSize: {
-    cpu: '2.0'
-    memory: '4.0Gi'
-    minReplicas: 1
-    maxReplicas: 1
-  }
+@description('Optional. The tags to apply to all deployed Azure resources.')
+param tags object = {
+  app: solutionPrefix
+  location: solutionLocation
 }
-param capacity int = 1
 
+//
+// Add your parameters here
+//
 
-var modelVersion = '2024-08-06'
-var aiServicesName = '${prefix}-aiservices'
-var deploymentType  = 'GlobalStandard'
-var gptModelVersion = 'gpt-4o'
-var appVersion = 'latest'
-var resgistryName = 'biabcontainerreg'
-var dockerRegistryUrl = 'https://${resgistryName}.azurecr.io'
+// ============== //
+// Resources      //
+// ============== //
 
-@description('URL for frontend docker image')
-var backendDockerImageURL = '${resgistryName}.azurecr.io/macaebackend:${appVersion}'
-var frontendDockerImageURL = '${resgistryName}.azurecr.io/macaefrontend:${appVersion}'
-
-var uniqueNameFormat = '${prefix}-{0}-${uniqueString(resourceGroup().id, prefix)}'
-var aoaiApiVersion = '2024-08-01-preview'
-
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: format(uniqueNameFormat, 'logs')
-  location: location
-  tags: tags
+/* #disable-next-line no-deployments-resources
+resource avmTelemetry 'Microsoft.Resources/deployments@2024-03-01' = if (enableTelemetry) {
+  name: '46d3xbcp.[[REPLACE WITH TELEMETRY IDENTIFIER]].${replace('-..--..-', '.', '-')}.${substring(uniqueString(deployment().name, location), 0, 4)}'
   properties: {
-    retentionInDays: 30
-    sku: {
-      name: 'PerGB2018'
+    mode: 'Incremental'
+    template: {
+      '$schema': 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#'
+      contentVersion: '1.0.0.0'
+      resources: []
+      outputs: {
+        telemetry: {
+          type: 'String'
+          value: 'For more information, see https://aka.ms/avm/TelemetryInfo'
+        }
+      }
     }
   }
-}
+} */
 
-resource appInsights 'Microsoft.Insights/components@2020-02-02-preview' = {
-  name: format(uniqueNameFormat, 'appins')
-  location: location
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
-    WorkspaceResourceId: logAnalytics.id
+// ========== Log Analytics Workspace ========== //
+module logAnalyticsWorkspace 'br/public:avm/res/operational-insights/workspace:0.11.1' = {
+  name: 'avm.ptn.sa.macae.operational-insights-workspace'
+  params: {
+    name: '${solutionPrefix}laws'
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
+    skuName: 'PerGB2018'
+    dataRetention: 30
   }
 }
 
-
-var aiModelDeployments = [
-  {
-    name: gptModelVersion
-    model: gptModelVersion
-    version: modelVersion
-    sku: {
-      name: deploymentType
-      capacity: capacity
-    }
-    raiPolicyName: 'Microsoft.Default'
+// ========== Application Insights ========== //
+module applicationInsights 'br/public:avm/res/insights/component:0.6.0' = {
+  name: 'avm.ptn.sa.macae.insights-component'
+  params: {
+    name: '${solutionPrefix}appi'
+    workspaceResourceId: logAnalyticsWorkspace.outputs.resourceId
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
+    diagnosticSettings: [{ workspaceResourceId: logAnalyticsWorkspace.outputs.resourceId }]
+    kind: 'web'
+    disableIpMasking: false
+    flowType: 'Bluefield'
+    requestSource: 'rest'
   }
-]
+}
 
-resource aiServices 'Microsoft.CognitiveServices/accounts@2024-04-01-preview' = {
-  name: aiServicesName
-  location: location
-  sku: {
-    name: 'S0'
+// ========== User assigned identity ========== //
+module userAssignedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.1' = {
+  name: 'avm.ptn.sa.macae.managed-identity-assigned-identity'
+  params: {
+    name: '${solutionPrefix}uaid'
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
   }
-  kind: 'AIServices'
-  properties: {
-    customSubDomainName: aiServicesName
+}
+
+// AI Foundry: AI Services
+// NOTE: Required version 'Microsoft.CognitiveServices/accounts@2024-04-01-preview' not available in AVM
+var aiServicesDeploymentGptName = 'gpt-4o'
+var aiServicesDeploymentGptVersion = '2024-08-06'
+module aiServices 'br/public:avm/res/cognitive-services/account:0.10.2' = {
+  name: 'avm.ptn.sa.macae.cognitive-services-account'
+  params: {
+    name: '${solutionPrefix}aisv'
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
+    diagnosticSettings: [{ workspaceResourceId: logAnalyticsWorkspace.outputs.resourceId }]
+    sku: 'S0'
+    kind: 'OpenAI'
+    disableLocalAuth: true
+    customSubDomainName: '${solutionPrefix}aisv'
     apiProperties: {
-      statisticsEnabled: false
+      staticsEnabled: false
     }
+    publicNetworkAccess: 'Enabled' //TODO: block and connect to vnet
+    managedIdentities: {
+      systemAssigned: true
+    }
+    roleAssignments: [
+      {
+        principalId: userAssignedIdentity.outputs.principalId
+        principalType: 'ServicePrincipal'
+        roleDefinitionIdOrName: 'Cognitive Services OpenAI User'
+      }
+    ]
+    deployments: [
+      {
+        name: aiServicesDeploymentGptName
+        model: {
+          format: 'OpenAI'
+          name: aiServicesDeploymentGptName
+          version: aiServicesDeploymentGptVersion
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 50
+        }
+      }
+    ]
   }
 }
 
-resource aiServicesDeployments 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = [for aiModeldeployment in aiModelDeployments: {
-  parent: aiServices //aiServices_m
-  name: aiModeldeployment.name
+var cosmosDbDatabaseName = 'autogen'
+var cosmosDbDatabaseMemoryContainerName = 'autogen'
+// ========== Cosmos DB ========== //
+module cosmosDb 'br/public:avm/res/document-db/database-account:0.12.0' = {
+  name: 'avm.ptn.sa.macae.cosmos-db'
+  params: {
+    // Required parameters
+    name: '${solutionPrefix}csdb'
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
+    diagnosticSettings: [{ workspaceResourceId: logAnalyticsWorkspace.outputs.resourceId }]
+    databaseAccountOfferType: 'Standard'
+    enableFreeTier: false
+    networkRestrictions: {
+      publicNetworkAccess: 'Enabled'
+    }
+    sqlDatabases: [
+      {
+        name: cosmosDbDatabaseName
+        containers: [
+          {
+            name: cosmosDbDatabaseMemoryContainerName
+            paths: [
+              '/session_id'
+            ]
+            kind: 'Hash'
+            version: 2
+          }
+        ]
+      }
+    ]
+    locations: [
+      {
+        locationName: solutionLocation
+        failoverPriority: 0
+      }
+    ]
+    capabilitiesToAdd: [
+      'EnableServerless'
+    ]
+    roleAssignments: [
+      {
+        principalId: userAssignedIdentity.outputs.principalId
+        principalType: 'ServicePrincipal'
+        roleDefinitionIdOrName: 'Contributor'
+      }
+    ]
+  }
+}
+
+// ==========Backend Container App Environment ========== //
+module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.10.2' = {
+  name: 'avm.ptn.sa.macae.container-app-environment'
+  params: {
+    name: '${solutionPrefix}cenv'
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
+    logAnalyticsWorkspaceResourceId: logAnalyticsWorkspace.outputs.resourceId
+    appInsightsConnectionString: applicationInsights.outputs.connectionString
+    publicNetworkAccess: 'Enabled' //TODO: block and connect to vnet
+    zoneRedundant: false //TODO: make it zone redundant for waf aligned
+  }
+}
+resource aspireDashboard 'Microsoft.App/managedEnvironments/dotNetComponents@2024-10-02-preview' = {
+  name: '${solutionPrefix}cenv/aspire-dashboard'
   properties: {
-    model: {
-      format: 'OpenAI'
-      name: aiModeldeployment.model
-      version: aiModeldeployment.version
+    componentType: 'AspireDashboard'
+  }
+  dependsOn: [containerAppEnvironment]
+}
+var test = containerApp.outputs.systemAssignedMIPrincipalId
+// ==========Backend Container App Service ========== //
+module containerApp 'br/public:avm/res/app/container-app:0.14.2' = {
+  name: 'avm.ptn.sa.macae.container-app'
+  params: {
+    name: '${solutionPrefix}capp'
+    tags: tags
+    location: solutionLocation
+    enableTelemetry: enableTelemetry
+    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    managedIdentities: { systemAssigned: true, userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
+    ingressTargetPort: 8000
+    ingressExternal: true
+    activeRevisionsMode: 'Single'
+    corsPolicy: {
+      allowedOrigins: [
+        'https://${webSiteName}.azurewebsites.net'
+        'http://${webSiteName}.azurewebsites.net'
+      ]
     }
-    raiPolicyName: aiModeldeployment.raiPolicyName
+    scaleSettings: {
+      //TODO: Make maxReplicas and minReplicas parameterized
+      maxReplicas: 1
+      minReplicas: 1
+      rules: [
+        {
+          name: 'http-scaler'
+          http: {
+            metadata: {
+              concurrentRequests: '100'
+            }
+          }
+        }
+      ]
+    }
+    containers: [
+      {
+        name: 'backend'
+        //TODO: Make image parameterized for the registry name and the appversion
+        image: 'biabcontainerreg.azurecr.io/macaebackend:latest'
+        resources: {
+          //TODO: Make cpu and memory parameterized
+          cpu: '2.0'
+          memory: '4.0Gi'
+        }
+        env: [
+          {
+            name: 'COSMOSDB_ENDPOINT'
+            value: cosmosDb.outputs.endpoint
+          }
+          {
+            name: 'COSMOSDB_DATABASE'
+            value: cosmosDbDatabaseName
+          }
+          {
+            name: 'COSMOSDB_CONTAINER'
+            value: cosmosDbDatabaseMemoryContainerName
+          }
+          {
+            name: 'AZURE_OPENAI_ENDPOINT'
+            value: aiServices.outputs.endpoint
+          }
+          {
+            name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
+            value: aiServicesDeploymentGptName
+          }
+          {
+            name: 'AZURE_OPENAI_API_VERSION'
+            value: '2024-08-01-preview'
+          }
+          {
+            name: 'FRONTEND_SITE_NAME'
+            value: 'https://${webSiteName}.azurewebsites.net'
+          }
+          {
+            name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+            value: applicationInsights.outputs.connectionString
+          }
+        ]
+      }
+    ]
   }
-  sku:{
-    name: aiModeldeployment.sku.name
-    capacity: aiModeldeployment.sku.capacity
-  }
-}]
-
-module kvault 'deploy_keyvault.bicep' = {
-  name: 'deploy_keyvault'
-  params: {
-    solutionName: prefix
-    solutionLocation: location
-    managedIdentityObjectId:managedIdentityModule.outputs.managedIdentityOutput.objectId
-  }
-  scope: resourceGroup(resourceGroup().name)
 }
 
-module aifoundry 'deploy_ai_foundry.bicep' = {
-  name: 'deploy_ai_foundry'
+// ========== Frontend server farm ========== //
+module webServerfarm 'br/public:avm/res/web/serverfarm:0.4.1' = {
+  name: 'avm.ptn.sa.macae.web-server-farm'
   params: {
-    solutionName: prefix
-    solutionLocation: azureOpenAILocation
-    keyVaultName: kvault.outputs.keyvaultName
-    gptModelName: gptModelVersion
-    gptModelVersion: gptModelVersion
-    managedIdentityObjectId:managedIdentityModule.outputs.managedIdentityOutput.objectId
-    aiServicesEndpoint: aiServices.properties.endpoint
-    aiServicesKey: aiServices.listKeys().key1
-    aiServicesId: aiServices.id
+    tags: tags
+    location: solutionLocation
+    name: '${solutionPrefix}sfrm'
+    skuName: 'P1v2'
+    skuCapacity: 1
+    reserved: true
+    kind: 'linux'
+    zoneRedundant: false //TODO: make it zone redundant for waf aligned
   }
-  scope: resourceGroup(resourceGroup().name)
 }
-// resource openai 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' = {
-//   name: format(uniqueNameFormat, 'openai')
-//   location: azureOpenAILocation
-//   tags: tags
-//   kind: 'OpenAI'
-//   sku: {
-//     name: 'S0'
-//   }
-//   properties: {
-//     customSubDomainName: format(uniqueNameFormat, 'openai')
-//   }
-//   resource gpt4o 'deployments' = {
-//     name: 'gpt-4o'
-//     sku: {
-//       name: 'GlobalStandard'
-//       capacity: resourceSize.gpt4oCapacity
-//     }
-//     properties: {
-//       model: {
-//         format: 'OpenAI'
-//         name: gptModelVersion
-//         version: '2024-08-06'
-//       }
-//       versionUpgradeOption: 'NoAutoUpgrade'
-//     }
-//   }
-// }
+// ========== Frontend web site ========== //
+var webSiteName = '${solutionPrefix}wapp'
+module webSite 'br/public:avm/res/web/site:0.15.1' = {
+  name: 'avm.ptn.sa.macae.web-site'
+  params: {
+    tags: tags
+    kind: 'app,linux,container'
+    name: webSiteName
+    location: solutionLocation
+    serverFarmResourceId: webServerfarm.outputs.resourceId
+    managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
+    appInsightResourceId: applicationInsights.outputs.resourceId
+    siteConfig: {
+      linuxFxVersion: 'DOCKER|biabcontainerreg.azurecr.io/macaefrontend:latest'
+    }
+    appSettingsKeyValuePairs: {
+      SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
+      DOCKER_REGISTRY_SERVER_URL: 'https://biabcontainerreg.azurecr.io'
+      WEBSITES_PORT: '3000'
+      WEBSITES_CONTAINER_START_TIME_LIMIT: '1800' // 30 minutes, adjust as needed
+      BACKEND_API_URL: 'https://${containerApp.outputs.fqdn}'
+    }
+  }
+}
 
 resource aoaiUserRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-05-01-preview' existing = {
   name: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' //'Cognitive Services OpenAI User'
 }
 
-resource acaAoaiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerApp.id, aiServices.id, aoaiUserRoleDefinition.id)
-  scope: aiServices
+resource assignAoaRole 'Microsoft.Resources/deployments@2021-04-01' = {
+  name: 'assignAoaRole'
+  dependsOn: [
+    containerApp
+    aiServices
+  ]
   properties: {
-    principalId: containerApp.identity.principalId
-    roleDefinitionId: aoaiUserRoleDefinition.id
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
-  name: format(uniqueNameFormat, 'cosmos')
-  location: location
-  tags: tags
-  kind: 'GlobalDocumentDB'
-  properties: {
-    databaseAccountOfferType: 'Standard'
-    enableFreeTier: false
-    locations: [
-      {
-        failoverPriority: 0
-        locationName: location
-      }
-    ]
-    capabilities: [ { name: 'EnableServerless' } ]
-  }
-
-  resource contributorRoleDefinition 'sqlRoleDefinitions' existing = {
-    name: '00000000-0000-0000-0000-000000000002'
-  }
-
-  resource autogenDb 'sqlDatabases' = {
-    name: 'autogen'
-    properties: {
-      resource: {
-        id: 'autogen'
-        createMode: 'Default'
-      }
-    }
-
-    resource memoryContainer 'containers' = {
-      name: 'memory'
-      properties: {
-        resource: {
-          id: 'memory'
-          partitionKey: {
-            kind: 'Hash'
-            version: 2
-            paths: [
-              '/session_id'
-            ]
-          }
-        }
-      }
-    }
-  }
-}
-// Define existing ACR resource
-
-
-resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-07-31-preview' = {
-  name: format(uniqueNameFormat, 'containerapp-pull')
-  location: location
-}
-
-
-
-resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: format(uniqueNameFormat, 'containerapp')
-  location: location
-  tags: tags
-  properties: {
-    daprAIConnectionString: appInsights.properties.ConnectionString
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalytics.properties.customerId
-        sharedKey: logAnalytics.listKeys().primarySharedKey
-      }
-    }
-  }
-  resource aspireDashboard 'dotNetComponents@2024-02-02-preview' = {
-    name: 'aspire-dashboard'
-    properties: {
-      componentType: 'AspireDashboard'
-    }
-  }
-}
-
-resource acaCosomsRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
-  name: guid(containerApp.id, cosmos::contributorRoleDefinition.id)
-  parent: cosmos
-  properties: {
-    principalId: containerApp.identity.principalId
-    roleDefinitionId: cosmos::contributorRoleDefinition.id
-    scope: cosmos.id
-  }
-}
-
-@description('')
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: '${prefix}-backend'
-  location: location
-  tags: tags
-  identity: {
-    type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
-      '${pullIdentity.id}': {}
-    }
-  }
-  properties: {
-    managedEnvironmentId: containerAppEnv.id
-    configuration: {
-      ingress: {
-        targetPort: 8000
-        external: true
-        corsPolicy: {
-          allowedOrigins: [
-            'https://${format(uniqueNameFormat, 'frontend')}.azurewebsites.net'
-            'http://${format(uniqueNameFormat, 'frontend')}.azurewebsites.net'
-          ]
-        }
-      }
-      activeRevisionsMode: 'Single'
-    }
+    mode: 'Incremental'
     template: {
-      scale: {
-        minReplicas: resourceSize.containerAppSize.minReplicas
-        maxReplicas: resourceSize.containerAppSize.maxReplicas
-        rules: [
-          {
-            name: 'http-scaler'
-            http: {
-              metadata: {
-                concurrentRequests: '100'
-              }
-            }
+      '$schema': 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#'
+      contentVersion: '1.0.0.0'
+      resources: [
+        {
+          type: 'Microsoft.Authorization/roleAssignments'
+          apiVersion: '2022-04-01'
+          name: guid(
+            '${containerApp.outputs.resourceId}',
+            '${aiServices.outputs.resourceId}',
+            '${aoaiUserRoleDefinition.id}'
+          )
+          properties: {
+            principalId: '${containerApp.outputs.systemAssignedMIPrincipalId}'
+            roleDefinitionId: '${aoaiUserRoleDefinition.id}'
+            principalType: 'ServicePrincipal'
           }
-        ]
-      }
-      containers: [
-        {
-          name: 'backend'
-          image: backendDockerImageURL
-          resources: {
-            cpu: json(resourceSize.containerAppSize.cpu)
-            memory: resourceSize.containerAppSize.memory
-          }
-          env: [
-            {
-              name: 'COSMOSDB_ENDPOINT'
-              value: cosmos.properties.documentEndpoint
-            }
-            {
-              name: 'COSMOSDB_DATABASE'
-              value: cosmos::autogenDb.name
-            }
-            {
-              name: 'COSMOSDB_CONTAINER'
-              value: cosmos::autogenDb::memoryContainer.name
-            }
-            {
-              name: 'AZURE_OPENAI_ENDPOINT'
-              value: aiServices.properties.endpoint
-            }
-            {
-              name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
-              value: gptModelVersion
-            }
-            {
-              name: 'AZURE_OPENAI_API_VERSION'
-              value: aoaiApiVersion
-            }
-            {
-              name: 'FRONTEND_SITE_NAME'
-              value: 'https://${format(uniqueNameFormat, 'frontend')}.azurewebsites.net'
-            }
-            {
-              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-              value: appInsights.properties.ConnectionString
-            }
-          ]
-        }
-      ]
-    }
-
-  }
-
-  }
-resource frontendAppServicePlan 'Microsoft.Web/serverfarms@2021-02-01' = {
-  name: format(uniqueNameFormat, 'frontend-plan')
-  location: location
-  tags: tags
-  sku: {
-    name: 'P1v2'
-    capacity: 1
-    tier: 'PremiumV2'
-  }
-  properties: {
-    reserved: true
-  }
-  kind: 'linux'  // Add this line to support Linux containers
-}
-
-resource frontendAppService 'Microsoft.Web/sites@2021-02-01' = {
-  name: format(uniqueNameFormat, 'frontend')
-  location: location
-  tags: tags
-  kind: 'app,linux,container'
-  properties: {
-    serverFarmId: frontendAppServicePlan.id
-    reserved: true
-    siteConfig: {
-      linuxFxVersion: 'DOCKER|${frontendDockerImageURL}'
-      appSettings: [
-        {
-          name: 'DOCKER_REGISTRY_SERVER_URL'
-          value: dockerRegistryUrl
-        }
-        {
-          name: 'WEBSITES_PORT'
-          value: '3000'
-        }
-        {
-          name: 'WEBSITES_CONTAINER_START_TIME_LIMIT'
-          value: '1800'
-        }
-        {
-          name: 'BACKEND_API_URL'
-          value: 'https://${containerApp.properties.configuration.ingress.fqdn}'
         }
       ]
     }
   }
-  dependsOn: [containerApp]
-  identity: {
-    type: 'SystemAssigned,UserAssigned'
-    userAssignedIdentities: {
-      '${pullIdentity.id}': {}
-    }
-  }
 }
-
-var cosmosAssignCli  = 'az cosmosdb sql role assignment create --resource-group "${resourceGroup().name}" --account-name "${cosmos.name}" --role-definition-id "${cosmos::contributorRoleDefinition.id}" --scope "${cosmos.id}" --principal-id "${containerApp.identity.principalId}"'
-
-module managedIdentityModule 'deploy_managed_identity.bicep' = {
-  name: 'deploy_managed_identity'
-  params: {
-    solutionName: prefix
-    //solutionLocation: location
-    managedIdentityId: pullIdentity.id
-    managedIdentityPropPrin: pullIdentity.properties.principalId
-    managedIdentityLocation: pullIdentity.location
-  }
-  scope: resourceGroup(resourceGroup().name)
+// ========== Cosmos DB Role Assignment ========== //
+resource contributorRoleDefinition 'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions@2021-06-15' existing = {
+  name: '${cosmosDb.outputs.name}/00000000-0000-0000-0000-000000000002'
 }
+var cosmosAssignCli = 'az cosmosdb sql role assignment create --resource-group "${resourceGroup().name}" --account-name "${cosmosDb.outputs.name}" --role-definition-id "${contributorRoleDefinition.id}" --scope "${cosmosDb.outputs.resourceId}" --principal-id "${containerApp.outputs.systemAssignedMIPrincipalId}"'
 
 module deploymentScriptCLI 'br/public:avm/res/resources/deployment-script:0.5.1' = {
   name: 'deploymentScriptCLI'
   params: {
-    // Required parameters
     kind: 'AzureCLI'
-    name: 'rdsmin001'
-    // Non-required parameters
+    name: 'assignCosmosDbRole'
+    location: resourceGroup().location
     azCliVersion: '2.69.0'
-    location: location
+    scriptContent: cosmosAssignCli
     managedIdentities: {
       userAssignedResourceIds: [
-        managedIdentityModule.outputs.managedIdentityId
+        userAssignedIdentity.outputs.resourceId
       ]
     }
-    scriptContent: cosmosAssignCli
   }
+  dependsOn: [
+    containerApp
+    cosmosDb
+  ]
 }
+
+output cosmosAssignCli string = cosmosAssignCli
+// ============ //
+// Outputs      //
+// ============ //
+
+// Add your outputs here
+
+// @description('The resource ID of the resource.')
+// output resourceId string = <Resource>.id
+
+// @description('The name of the resource.')
+// output name string = <Resource>.name
+
+// @description('The location the resource was deployed into.')
+// output location string = <Resource>.location
+
+// ================ //
+// Definitions      //
+// ================ //
+//
+// Add your User-defined-types here, if any
+//
