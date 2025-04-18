@@ -2,10 +2,10 @@ metadata name = 'main'
 metadata description = 'avm tests'
 
 @description('Required. Name of the resource to create.')
-param solutionPrefix string = 'rep234z'
+param solutionPrefix string //= 'rep234z'
 
 @description('Optional. Location for all Resources.')
-param solutionLocation string = resourceGroup().location
+param solutionLocation string //= resourceGroup().location
 
 @description('Optional. Enable/Disable usage telemetry for module.')
 param enableTelemetry bool = true
